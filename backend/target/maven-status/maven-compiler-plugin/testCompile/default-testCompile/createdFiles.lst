@@ -1,0 +1,11 @@
+com\maintenance\maintenance_api\service\MachineServiceTest.class
+com\maintenance\maintenance_api\MaintenanceApiApplicationTests.class
+com\maintenance\maintenance_api\service\TelemetryServiceTest.class
+com\maintenance\maintenance_api\controller\AlertControllerTest.class
+com\maintenance\maintenance_api\controller\PredictionControllerTest.class
+com\maintenance\maintenance_api\service\DashboardServiceTest.class
+com\maintenance\maintenance_api\service\PredictionServiceTest.class
+com\maintenance\maintenance_api\controller\MachineControllerTest.class
+com\maintenance\maintenance_api\controller\DashboardControllerTest.class
+com\maintenance\maintenance_api\controller\TelemetryControllerTest.class
+com\maintenance\maintenance_api\service\AlertServiceTest.class
