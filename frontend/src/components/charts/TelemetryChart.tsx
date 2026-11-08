@@ -98,7 +98,7 @@ export const TelemetryChart: React.FC<TelemetryChartProps> = ({
             Signaux de Télémétrie Capteurs
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            Évolution temporelle des 4 grandeurs physiques du dataset Azure
+            Évolution temporelle des 4 grandeurs physiques de la machine
           </p>
         </div>
 

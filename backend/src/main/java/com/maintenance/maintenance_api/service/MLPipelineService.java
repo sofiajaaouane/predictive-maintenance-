@@ -33,16 +33,16 @@ public class MLPipelineService {
                 .lastRun(lastRun)
                 .machinesProcessed(machineCount > 0 ? machineCount : 10)
                 .lastPredictionDate(lastPredictionDate)
-                .modelName("azure-pm-gradient-boost")
+                .modelName("pm-gradient-boost")
                 .modelVersion("v2.4.1")
                 .isMock(true)
-                .disclaimer("DEMO DATA / MOCK: Ce statut simule l'état du futur pipeline Airflow / MLflow. Aucune connexion live n'est active en Phase 1.")
+                .disclaimer("Ce statut simule l'état du futur pipeline Airflow / MLflow.")
                 .build();
     }
 
     public MLModelInfoDto getModelInfo() {
         return MLModelInfoDto.builder()
-                .modelName("azure-pm-gradient-boost")
+                .modelName("pm-gradient-boost")
                 .modelVersion("v2.4.1")
                 .framework("Scikit-Learn / LightGBM")
                 .accuracy(0.942)

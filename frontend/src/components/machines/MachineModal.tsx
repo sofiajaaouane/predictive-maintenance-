@@ -181,7 +181,7 @@ export const MachineModal: React.FC<MachineModalProps> = ({
               className="w-full px-3.5 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
             />
             <span className="text-[11px] text-slate-500">
-              Âge natif d'exploitation au sein du dataset Azure.
+              Âge d'exploitation de la machine au sein du parc industriel.
             </span>
           </div>
 

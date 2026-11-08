@@ -1,239 +1,260 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useMachineDetail } from '../hooks/useMachineDetail';
-import { useTelemetry } from '../hooks/useTelemetry';
 import { machineApi } from '../api/machineApi';
-import { Machine } from '../types';
+import { telemetryApi } from '../api/telemetryApi';
+import { predictionApi } from '../api/predictionApi';
+import { maintenanceApi } from '../api/maintenanceApi';
+import { errorApi } from '../api/errorApi';
+import { Machine, Telemetry, Prediction, Maintenance, MachineError } from '../types';
 import { Topbar } from '../layouts/Topbar';
 import { ComponentBadge, StatusBadge } from '../components/common/Badge';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { ErrorMessage } from '../components/common/ErrorMessage';
-import { MachineModal } from '../components/machines/MachineModal';
-import { DeleteMachineModal } from '../components/machines/DeleteMachineModal';
-import { TelemetryChart } from '../components/charts/TelemetryChart';
-import { formatDate, formatTimeAgo } from '../utils/dateUtils';
+import { IndustrialSensorChart } from '../components/charts/IndustrialSensorChart';
+import { FailureProbabilityGauge } from '../components/charts/FailureProbabilityGauge';
+import { ConditionTrendChart } from '../components/charts/ConditionTrendChart';
+import { PartsStatusCard } from '../components/dashboard/PartsStatusCard';
+import { formatDate } from '../utils/dateUtils';
 import {
   ArrowLeft,
   Factory,
-  Sparkles,
   Wrench,
   AlertCircle,
   Clock,
   History,
-  Edit2,
-  Trash2,
+  ShieldCheck,
+  HeartPulse,
 } from 'lucide-react';
 
 export const MachineDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const machineId = Number(id);
   const navigate = useNavigate();
+
+  const [machine, setMachine] = useState<Machine | null>(null);
+  const [telemetry, setTelemetry] = useState<Telemetry[]>([]);
   const [period, setPeriod] = useState<'6h' | '24h' | '7d'>('24h');
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [maintenanceList, setMaintenanceList] = useState<Maintenance[]>([]);
+  const [errorList, setErrorList] = useState<MachineError[]>([]);
 
-  // Modals
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isTelemetryLoading, setIsTelemetryLoading] = useState(false);
 
-  const {
-    machine,
-    predictions,
-    maintenanceList,
-    errorList,
-    isLoading: isMachineLoading,
-    isRefreshing,
-    error: machineError,
-    refetch: refetchMachine,
-  } = useMachineDetail(machineId);
-
-  const {
-    telemetry,
-    isLoading: isTelemetryLoading,
-    error: telemetryError,
-    refetch: refetchTelemetry,
-  } = useTelemetry(machineId, period);
-
-  const handleRefresh = async () => {
-    await Promise.all([refetchMachine(), refetchTelemetry()]);
-  };
-
-  const handlePeriodChange = (newPeriod: '6h' | '24h' | '7d') => {
-    setPeriod(newPeriod);
-  };
-
-  const handleEditSuccess = () => {
-    refetchMachine();
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!machine) return;
+  const loadMachineData = async () => {
+    if (!machineId || isNaN(machineId)) return;
     try {
-      setIsDeleting(true);
-      await machineApi.deleteMachine(machine.id);
-      navigate('/machines');
-    } catch (err: any) {
-      console.error('Erreur suppression machine:', err);
+      setIsRefreshing(true);
+      const [m, p, maint, errs] = await Promise.all([
+        machineApi.getById(machineId),
+        predictionApi.getByMachineId(machineId),
+        maintenanceApi.getByMachineId(machineId),
+        errorApi.getByMachineId(machineId),
+      ]);
+      setMachine(m);
+      setPredictions(p);
+      setMaintenanceList(maint);
+      setErrorList(errs);
+    } catch (error) {
+      console.error('Erreur chargement détail machine:', error);
     } finally {
-      setIsDeleting(false);
+      setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
+  const loadTelemetry = async (selectedPeriod: '6h' | '24h' | '7d') => {
+    if (!machineId || isNaN(machineId)) return;
+    try {
+      setIsTelemetryLoading(true);
+      const data = await telemetryApi.getHistory(machineId, selectedPeriod);
+      setTelemetry(data);
+    } catch (error) {
+      console.error('Erreur chargement télémétrie:', error);
+    } finally {
+      setIsTelemetryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadMachineData();
+    loadTelemetry(period);
+  }, [machineId]);
+
+  const handlePeriodChange = (newPeriod: '6h' | '24h' | '7d') => {
+    setPeriod(newPeriod);
+    loadTelemetry(newPeriod);
+  };
+
+  const latestPrediction = machine?.lastPrediction;
+  const isCritical = latestPrediction?.status === 'CRITICAL';
+  const isWarning = latestPrediction?.status === 'WARNING';
+  const healthScore = isCritical ? 42 : isWarning ? 68 : 96;
+
+  // Condition trend points based on telemetry or prediction history
+  const trendPoints = telemetry.map((t) => ({
+    time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    value: 100 - (t.vibration * 0.8 + (t.pressure - 100) * 0.5),
+  }));
+
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
+    <div className="flex-1 flex flex-col min-h-screen bg-slate-50 dark:bg-[#080c14] transition-colors duration-200">
       <Topbar
-        title={`Détails Machine : ${machine?.machineIdentifier || `ID #${id}`}`}
-        subtitle="Historique télémétrique, prédictions ML, maintenance et erreurs"
-        onRefresh={handleRefresh}
+        title={`Cockpit Machine : ${machine?.machineIdentifier || '...'}`}
+        subtitle="Supervision télémétrique, prédictions ML, historique maintenance & erreurs"
+        onRefresh={() => {
+          loadMachineData();
+          loadTelemetry(period);
+        }}
         isRefreshing={isRefreshing}
       />
 
-      <main className="flex-1 p-8 max-w-7xl w-full mx-auto space-y-8">
-        {/* Navigation & Action Bar */}
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => navigate('/machines')}
-            className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <ArrowLeft size={16} />
-            <span>Retour au parc de machines</span>
-          </button>
+      <main className="flex-1 p-5 sm:p-8 max-w-[1600px] w-full mx-auto space-y-6">
+        {/* Back Button */}
+        <button
+          onClick={() => navigate('/machines')}
+          className="flex items-center gap-2 text-xs font-mono font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+        >
+          <ArrowLeft size={15} />
+          <span>Retour au parc machines</span>
+        </button>
 
-          {machine && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsEditModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all"
-              >
-                <Edit2 size={13} />
-                <span>Modifier</span>
-              </button>
-              <button
-                onClick={() => setIsDeleteModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/40 text-xs font-semibold transition-all"
-              >
-                <Trash2 size={13} />
-                <span>Supprimer</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {machineError && (
-          <ErrorMessage
-            title="Erreur lors du chargement de la machine"
-            message={machineError}
-            onRetry={handleRefresh}
-          />
-        )}
-
-        {isMachineLoading ? (
-          <LoadingSpinner text="Chargement des données de la machine..." />
+        {isLoading ? (
+          <LoadingSpinner text="Chargement du cockpit machine..." />
         ) : !machine ? (
-          <div className="p-12 text-center text-slate-500">
-            Machine #{id} introuvable dans le système.
-          </div>
+          <div className="p-12 text-center text-slate-400 font-mono text-xs">Machine introuvable.</div>
         ) : (
           <>
-            {/* Machine Header Card */}
-            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-xl">
+            {/* 1. MACHINE HEADER COCKPIT */}
+            <div className="bg-[#f8fafc] dark:bg-[#0e1524] border border-slate-300/80 dark:border-[#1c2842] rounded-2xl p-6 shadow-xs">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-blue-950/80 border border-blue-800/60 flex items-center justify-center text-blue-400 shrink-0 shadow-lg shadow-blue-900/20">
+                  <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/50 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
                     <Factory size={28} />
                   </div>
                   <div>
                     <div className="flex items-center gap-3">
-                      <h2 className="text-2xl font-extrabold text-white font-mono tracking-tight">
+                      <h2 className="text-2xl font-mono font-extrabold text-slate-950 dark:text-white tracking-tight">
                         {machine.machineIdentifier}
                       </h2>
                       <StatusBadge status={machine.riskLevel} />
                     </div>
-                    <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-400">
-                      <span>
-                        Modèle : <strong className="text-slate-200">{machine.model}</strong>
-                      </span>
+                    <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-600 dark:text-slate-400 font-mono">
+                      <span>Modèle : <strong className="text-slate-950 dark:text-slate-200">{machine.model}</strong></span>
                       <span>•</span>
-                      <span>
-                        Âge natif :{' '}
-                        <strong className="text-slate-200 font-mono">{machine.age} ans</strong>
-                      </span>
+                      <span>Âge natif : <strong className="text-slate-950 dark:text-slate-200">{machine.age} ans</strong></span>
                       <span>•</span>
-                      <span>
-                        Enregistrée le :{' '}
-                        <strong className="text-slate-300">{formatDate(machine.createdAt)}</strong>
-                      </span>
+                      <span>Enregistrée : <strong className="text-slate-800 dark:text-slate-300 font-sans font-medium">{formatDate(machine.createdAt)}</strong></span>
                     </div>
                   </div>
                 </div>
 
-                {/* Latest Prediction Summary Pill */}
-                <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 min-w-[260px]">
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <Sparkles size={13} className="text-indigo-400" /> Dernière Prédiction ML
-                    </span>
-                    <span className="text-slate-500 font-mono text-[10px]">
-                      {machine.lastPrediction?.modelVersion || 'v2.4.1'}
+                {/* 3 Quick Cockpit KPI cards */}
+                <div className="grid grid-cols-3 gap-3 w-full md:w-auto">
+                  {/* Health Score */}
+                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#131b2e] border border-slate-200/90 dark:border-slate-800 text-center min-w-[105px] shadow-2xs">
+                    <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 block mb-0.5 font-bold">HEALTH SCORE</span>
+                    <span className={`text-xl font-mono font-extrabold ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      {healthScore}%
                     </span>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <ComponentBadge
-                      component={machine.lastPrediction?.predictedComponent || 'none'}
-                    />
-                    <div className="text-right">
-                      <div className="text-sm font-mono font-bold text-white">
-                        {machine.lastPrediction?.probability !== undefined
-                          ? `${Math.round(machine.lastPrediction.probability * 100)}%`
-                          : '—'}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {formatTimeAgo(machine.lastPrediction?.timestamp)}
-                      </div>
-                    </div>
+
+                  {/* Failure Probability */}
+                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#131b2e] border border-slate-200/90 dark:border-slate-800 text-center min-w-[105px] shadow-2xs">
+                    <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 block mb-0.5 font-bold">FAILURE PROB.</span>
+                    <span className={`text-xl font-mono font-extrabold ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      {Math.round((latestPrediction?.probability || 0.05) * 100)}%
+                    </span>
+                  </div>
+
+                  {/* Component at Risk */}
+                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#131b2e] border border-slate-200/90 dark:border-slate-800 text-center min-w-[105px] shadow-2xs">
+                    <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 block mb-0.5 font-bold">RISK COMPONENT</span>
+                    <span className="text-sm font-mono font-extrabold text-indigo-600 dark:text-indigo-400 uppercase">
+                      {latestPrediction?.predictedComponent || 'NONE'}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Telemetry Chart with Multi-period Selector */}
-            {telemetryError ? (
-              <ErrorMessage
-                title="Erreur lors du chargement de la télémétrie"
-                message={telemetryError}
-                onRetry={refetchTelemetry}
-              />
-            ) : (
-              <TelemetryChart
-                telemetryData={telemetry}
-                period={period}
-                onPeriodChange={handlePeriodChange}
-                isLoading={isTelemetryLoading}
-              />
-            )}
+            {/* 2. SENSOR ANALYSIS & FAILURE PROBABILITY GAUGE ROW */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* SENSOR & VIBRATION ANALYSIS — MCH-XXX (8 cols) */}
+              <div className="lg:col-span-8">
+                <IndustrialSensorChart
+                  telemetryData={telemetry}
+                  period={period}
+                  onPeriodChange={handlePeriodChange}
+                  isLoading={isTelemetryLoading}
+                  title={`SENSOR & VIBRATION ANALYSIS — ${machine.machineIdentifier}`}
+                  subtitle="Signaux temps réel des 4 capteurs (Tension, Rotation, Pression, Vibration)"
+                />
+              </div>
 
-            {/* Multi-column Grid: Predictions History / Maintenance History / Errors */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* FAILURE PROBABILITY GAUGE (4 cols) */}
+              <div className="lg:col-span-4 bg-[#f8fafc] dark:bg-[#0e1524] border border-slate-300/80 dark:border-[#1c2842] rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+                <FailureProbabilityGauge
+                  machineIdentifier={machine.machineIdentifier}
+                  predictedComponent={latestPrediction?.predictedComponent || 'none'}
+                  probability={latestPrediction?.probability || 0.05}
+                  status={latestPrediction?.status || 'NORMAL'}
+                  title="FAILURE PROBABILITY"
+                  subtitle="Probabilité calculée pour les prochaines 24 heures"
+                />
+              </div>
+            </div>
+
+            {/* 3. CONDITION TREND & PARTS STATUS ROW */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Condition Trend (6 cols) */}
+              <div className="lg:col-span-6">
+                <ConditionTrendChart
+                  dataPoints={trendPoints}
+                  period={period}
+                  onPeriodChange={handlePeriodChange}
+                />
+              </div>
+
+              {/* Parts / Component Status (6 cols) */}
+              <div className="lg:col-span-6">
+                <PartsStatusCard
+                  predictedComponent={latestPrediction?.predictedComponent}
+                  status={latestPrediction?.status}
+                  probability={latestPrediction?.probability}
+                />
+              </div>
+            </div>
+
+            {/* 4. PREDICTIONS, MAINTENANCE & ERRORS 3-COLUMN STACK */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
               {/* Predictions History */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 flex flex-col">
-                <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 mb-4">
-                  <History size={16} className="text-indigo-400" />
-                  Historique Prédictions
-                </h3>
-                <div className="space-y-3 flex-1 overflow-y-auto max-h-80 pr-1">
+              <div className="bg-white dark:bg-[#0e1524] border border-slate-200 dark:border-[#1c2842] rounded-2xl p-5 shadow-sm flex flex-col">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80 mb-3">
+                  <div className="flex items-center gap-2">
+                    <History size={16} className="text-indigo-500" />
+                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                      HISTORIQUE PRÉDICTIONS
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400">{predictions.length} Inférences</span>
+                </div>
+
+                <div className="space-y-2.5 flex-1 overflow-y-auto max-h-72 pr-1">
                   {predictions.length > 0 ? (
                     predictions.map((p) => (
                       <div
                         key={p.id}
-                        className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between gap-2"
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
                       >
                         <div>
                           <ComponentBadge component={p.predictedComponent} />
-                          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-                            <Clock size={11} /> {formatDate(p.timestamp)}
+                          <div className="text-[10px] font-mono text-slate-400 mt-1 flex items-center gap-1">
+                            <Clock size={10} /> {formatDate(p.timestamp)}
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className="text-xs font-mono font-bold text-slate-200">
+                          <span className="text-xs font-mono font-bold text-slate-900 dark:text-white">
                             {Math.round(p.probability * 100)}%
                           </span>
                           <div className="mt-0.5">
@@ -243,75 +264,83 @@ export const MachineDetail: React.FC = () => {
                       </div>
                     ))
                   ) : (
-                    <p className="text-xs text-slate-500 py-6 text-center">
-                      Aucune prédiction enregistrée.
-                    </p>
+                    <p className="text-xs text-slate-400 py-6 text-center">Aucune prédiction enregistrée.</p>
                   )}
                 </div>
               </div>
 
               {/* Maintenance History */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 flex flex-col">
-                <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 mb-4">
-                  <Wrench size={16} className="text-amber-400" />
-                  Historique Maintenance
-                </h3>
-                <div className="space-y-3 flex-1 overflow-y-auto max-h-80 pr-1">
+              <div className="bg-white dark:bg-[#0e1524] border border-slate-200 dark:border-[#1c2842] rounded-2xl p-5 shadow-sm flex flex-col">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80 mb-3">
+                  <div className="flex items-center gap-2">
+                    <Wrench size={16} className="text-amber-500" />
+                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                      HISTORIQUE MAINTENANCE
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400">{maintenanceList.length} Interventions</span>
+                </div>
+
+                <div className="space-y-2.5 flex-1 overflow-y-auto max-h-72 pr-1">
                   {maintenanceList.length > 0 ? (
                     maintenanceList.map((m) => (
                       <div
                         key={m.id}
-                        className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80"
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800"
                       >
                         <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="font-mono font-bold text-blue-300 uppercase px-2 py-0.5 rounded bg-blue-950/80 border border-blue-800/50">
+                          <span className="font-mono font-bold text-blue-700 dark:text-blue-300 uppercase px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950/80 border border-blue-200 dark:border-blue-800/50 text-[10px]">
                             {m.component}
                           </span>
-                          <span className="text-[11px] text-slate-500 font-mono">
-                            {formatDate(m.maintenanceDate)}
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {formatDate(m.maintenanceDate).split(' ')[0]}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-300 mt-1.5">
+                        <p className="text-xs text-slate-700 dark:text-slate-300 mt-1 font-medium">
                           {m.description || 'Intervention documentée'}
                         </p>
                       </div>
                     ))
                   ) : (
-                    <p className="text-xs text-slate-500 py-6 text-center">
-                      Aucune maintenance passée.
-                    </p>
+                    <p className="text-xs text-slate-400 py-6 text-center">Aucune intervention passée.</p>
                   )}
                 </div>
               </div>
 
-              {/* Machine Errors History */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 flex flex-col">
-                <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 mb-4">
-                  <AlertCircle size={16} className="text-rose-400" />
-                  Historique des Erreurs
-                </h3>
-                <div className="space-y-3 flex-1 overflow-y-auto max-h-80 pr-1">
+              {/* Error Stack */}
+              <div className="bg-white dark:bg-[#0e1524] border border-slate-200 dark:border-[#1c2842] rounded-2xl p-5 shadow-sm flex flex-col">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80 mb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-rose-500" />
+                    <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                      JOURNAL DES ERREURS
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400">{errorList.length} Erreurs</span>
+                </div>
+
+                <div className="space-y-2.5 flex-1 overflow-y-auto max-h-72 pr-1">
                   {errorList.length > 0 ? (
                     errorList.map((err) => (
                       <div
                         key={err.id}
-                        className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80"
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800"
                       >
                         <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="font-mono font-bold text-rose-300 px-2 py-0.5 rounded bg-rose-950/80 border border-rose-800/50">
+                          <span className="font-mono font-bold text-rose-700 dark:text-rose-300 px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/80 border border-rose-200 dark:border-rose-800/50 text-[10px]">
                             {err.errorCode}
                           </span>
-                          <span className="text-[11px] text-slate-500 font-mono">
+                          <span className="text-[10px] font-mono text-slate-400">
                             {formatDate(err.timestamp)}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-300 mt-1.5">{err.description}</p>
+                        <p className="text-xs text-slate-700 dark:text-slate-300 mt-1 font-medium">
+                          {err.description}
+                        </p>
                       </div>
                     ))
                   ) : (
-                    <p className="text-xs text-slate-500 py-6 text-center">
-                      Aucune erreur signalée.
-                    </p>
+                    <p className="text-xs text-slate-400 py-6 text-center">Aucune erreur signalée.</p>
                   )}
                 </div>
               </div>
@@ -319,23 +348,6 @@ export const MachineDetail: React.FC = () => {
           </>
         )}
       </main>
-
-      {/* Edit Modal */}
-      <MachineModal
-        isOpen={isEditModalOpen}
-        onClose={() => setIsEditModalOpen(false)}
-        onSuccess={handleEditSuccess}
-        machineToEdit={machine}
-      />
-
-      {/* Delete Modal */}
-      <DeleteMachineModal
-        isOpen={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
-        onConfirm={handleDeleteConfirm}
-        machine={machine}
-        isDeleting={isDeleting}
-      />
     </div>
   );
 };
